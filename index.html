@@ -1,0 +1,936 @@
+<!doctype html>
+<!--
+  RenderHeads Fluid Cubes — v0.3.0-lighting-controls-stable
+  - Stable pipeline: InstancedMesh + MeshStandardMaterial + onBeforeCompile
+  - Adds real lights + live lighting controls:
+      Ambient intensity
+      Key/Fill/Rim Directional lights: intensity + azimuth/elevation
+      Material: roughness + metalness
+      Optional shadows toggle (OFF by default)
+  - Keeps: color controls, cube size, right-click stir, orbit left-drag, presets, pause/reset, FPS, hotkeys
+  - Hotkeys:
+      Space = Pause/Resume
+      R = Reset distribution
+      1/2/3 = Cube count 2k/8k/20k
+      H = Hide/Show UI
+      M = Toggle stirring
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Fluid Cubes — v0.3.0</title>
+  <style>
+    html, body { margin:0; height:100%; background:#06070a; overflow:hidden; }
+    #c { width:100%; height:100%; display:block; }
+
+    .panel{
+      position:fixed;
+      left:12px; top:12px;
+      width:min(460px, calc(100vw - 24px));
+      max-height: calc(100vh - 24px);
+      overflow:auto;
+      color:rgba(255,255,255,.92);
+      background:rgba(0,0,0,.38);
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:14px;
+      padding:12px 12px 10px 12px;
+      font:12px/1.25 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      backdrop-filter: blur(10px);
+      user-select:none;
+    }
+    .title{
+      display:flex;
+      align-items:baseline;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom:10px;
+      position:sticky;
+      top:0;
+      padding-top:2px;
+      background:rgba(0,0,0,.10);
+      backdrop-filter: blur(10px);
+    }
+    .title b{ font-weight:700; letter-spacing:.2px; }
+    .meta{
+      opacity:.85;
+      font-variant-numeric: tabular-nums;
+      white-space:nowrap;
+    }
+
+    .sectionTitle{
+      margin-top:10px;
+      font-weight:700;
+      opacity:.95;
+      letter-spacing:.2px;
+    }
+
+    .row{
+      display:grid;
+      grid-template-columns: 130px 1fr 60px;
+      gap:10px;
+      align-items:center;
+      padding:6px 0;
+    }
+    .row label{ opacity:.9; }
+    input[type="range"]{ width:100%; }
+    input[type="color"]{
+      width:100%;
+      height:28px;
+      padding:0;
+      border:none;
+      background:transparent;
+      cursor:pointer;
+    }
+    select{
+      width:100%;
+      height:28px;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.06);
+      color:rgba(255,255,255,.92);
+      padding:0 10px;
+      outline:none;
+    }
+    .toggleRow{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      padding:6px 0 2px 0;
+    }
+    .toggleRow input{ transform: translateY(1px); }
+    .sep{
+      height:1px;
+      background: rgba(255,255,255,.10);
+      margin:10px 0;
+    }
+    .btnrow{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin-top:10px;
+    }
+    button{
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.06);
+      color:rgba(255,255,255,.92);
+      padding:7px 10px;
+      border-radius:10px;
+      cursor:pointer;
+      font:600 12px/1 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    }
+    button:hover{ background:rgba(255,255,255,.10); }
+    button:active{ transform: translateY(1px); }
+    button.primary{
+      background:rgba(255,255,255,.12);
+      border-color: rgba(255,255,255,.18);
+    }
+    button.toggled{
+      background: rgba(100, 200, 255, .16);
+      border-color: rgba(100, 200, 255, .28);
+    }
+    .hint{
+      margin-top:10px;
+      opacity:.75;
+      font-size:11px;
+      line-height:1.3;
+    }
+    .hidden{ display:none; }
+    .pill{
+      padding:2px 8px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.06);
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui" class="panel">
+  <div class="title">
+    <div>
+      <b>Fluid Cubes</b> <span class="pill">v0.3.0</span>
+    </div>
+    <div class="meta">
+      <span id="fps">FPS: —</span> · <span id="countLabel">cubes: —</span>
+    </div>
+  </div>
+
+  <div class="sectionTitle">Motion</div>
+  <div class="row">
+    <label for="amp">Amp</label>
+    <input id="amp" type="range" min="0" max="1.5" step="0.01" value="0.55" />
+    <div id="ampV" class="meta">0.55</div>
+  </div>
+  <div class="row">
+    <label for="speed">Speed</label>
+    <input id="speed" type="range" min="0" max="2.0" step="0.01" value="0.55" />
+    <div id="speedV" class="meta">0.55</div>
+  </div>
+  <div class="row">
+    <label for="cubeScale">Cube size</label>
+    <input id="cubeScale" type="range" min="0.25" max="2.50" step="0.01" value="1.00" />
+    <div id="cubeScaleV" class="meta">1.00</div>
+  </div>
+  <div class="row">
+    <label for="spin">Spin</label>
+    <input id="spin" type="range" min="0" max="3.0" step="0.01" value="0.85" />
+    <div id="spinV" class="meta">0.85</div>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="sectionTitle">Colour</div>
+  <div class="row">
+    <label for="colorMode">Colour mode</label>
+    <select id="colorMode">
+      <option value="0">Solid</option>
+      <option value="1" selected>Gradient (height)</option>
+      <option value="2">Seed mix (per cube)</option>
+    </select>
+    <div class="meta"></div>
+  </div>
+  <div class="row">
+    <label for="colorA">Colour A</label>
+    <input id="colorA" type="color" value="#3aa0ff" />
+    <div class="meta"></div>
+  </div>
+  <div class="row">
+    <label for="colorB">Colour B</label>
+    <input id="colorB" type="color" value="#ff3a8a" />
+    <div class="meta"></div>
+  </div>
+  <div class="row">
+    <label for="brightness">Brightness</label>
+    <input id="brightness" type="range" min="0" max="2.0" step="0.01" value="1.00" />
+    <div id="brightnessV" class="meta">1.00</div>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="sectionTitle">Interaction</div>
+  <div class="row">
+    <label for="stirStrength">Stir strength</label>
+    <input id="stirStrength" type="range" min="0" max="3.0" step="0.01" value="1.20" />
+    <div id="stirStrengthV" class="meta">1.20</div>
+  </div>
+  <div class="row">
+    <label for="stirRadius">Stir radius</label>
+    <input id="stirRadius" type="range" min="0.05" max="2.5" step="0.01" value="0.80" />
+    <div id="stirRadiusV" class="meta">0.80</div>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="sectionTitle">Lighting</div>
+  <div class="toggleRow">
+    <input id="lightsEnabled" type="checkbox" checked />
+    <label for="lightsEnabled">Enable lights</label>
+  </div>
+  <div class="toggleRow">
+    <input id="shadowsEnabled" type="checkbox" />
+    <label for="shadowsEnabled">Shadows (heavy)</label>
+  </div>
+
+  <div class="row">
+    <label for="ambientI">Ambient</label>
+    <input id="ambientI" type="range" min="0" max="2.5" step="0.01" value="0.45" />
+    <div id="ambientIV" class="meta">0.45</div>
+  </div>
+
+  <div class="sectionTitle">Key light</div>
+  <div class="row">
+    <label for="keyI">Intensity</label>
+    <input id="keyI" type="range" min="0" max="5.0" step="0.01" value="1.00" />
+    <div id="keyIV" class="meta">1.00</div>
+  </div>
+  <div class="row">
+    <label for="keyAz">Azimuth</label>
+    <input id="keyAz" type="range" min="-180" max="180" step="1" value="35" />
+    <div id="keyAzV" class="meta">35</div>
+  </div>
+  <div class="row">
+    <label for="keyEl">Elevation</label>
+    <input id="keyEl" type="range" min="-5" max="89" step="1" value="55" />
+    <div id="keyElV" class="meta">55</div>
+  </div>
+
+  <div class="sectionTitle">Fill light</div>
+  <div class="row">
+    <label for="fillI">Intensity</label>
+    <input id="fillI" type="range" min="0" max="5.0" step="0.01" value="0.55" />
+    <div id="fillIV" class="meta">0.55</div>
+  </div>
+  <div class="row">
+    <label for="fillAz">Azimuth</label>
+    <input id="fillAz" type="range" min="-180" max="180" step="1" value="-55" />
+    <div id="fillAzV" class="meta">-55</div>
+  </div>
+  <div class="row">
+    <label for="fillEl">Elevation</label>
+    <input id="fillEl" type="range" min="-5" max="89" step="1" value="25" />
+    <div id="fillElV" class="meta">25</div>
+  </div>
+
+  <div class="sectionTitle">Rim light</div>
+  <div class="row">
+    <label for="rimI">Intensity</label>
+    <input id="rimI" type="range" min="0" max="5.0" step="0.01" value="0.80" />
+    <div id="rimIV" class="meta">0.80</div>
+  </div>
+  <div class="row">
+    <label for="rimAz">Azimuth</label>
+    <input id="rimAz" type="range" min="-180" max="180" step="1" value="170" />
+    <div id="rimAzV" class="meta">170</div>
+  </div>
+  <div class="row">
+    <label for="rimEl">Elevation</label>
+    <input id="rimEl" type="range" min="-5" max="89" step="1" value="10" />
+    <div id="rimElV" class="meta">10</div>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="sectionTitle">Material</div>
+  <div class="row">
+    <label for="rough">Roughness</label>
+    <input id="rough" type="range" min="0" max="1" step="0.01" value="0.55" />
+    <div id="roughV" class="meta">0.55</div>
+  </div>
+  <div class="row">
+    <label for="metal">Metalness</label>
+    <input id="metal" type="range" min="0" max="1" step="0.01" value="0.10" />
+    <div id="metalV" class="meta">0.10</div>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="btnrow">
+    <button id="b2k">2k (1)</button>
+    <button id="b8k" class="primary">8k (2)</button>
+    <button id="b20k">20k (3)</button>
+    <button id="pause">Pause (Space)</button>
+    <button id="reset">Reset (R)</button>
+    <button id="stirToggle" class="toggled">Stir: ON (M)</button>
+    <button id="hide">Hide UI (H)</button>
+  </div>
+
+  <div class="hint">
+    <b>Left-drag</b>: rotate · Wheel: zoom · <b>Right-drag</b>: stir · Touch-drag: stir<br>
+    Hotkeys: <b>Space</b> pause, <b>R</b> reset, <b>1/2/3</b> cube count, <b>M</b> stir, <b>H</b> UI
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x06070a, 1);
+renderer.debug.checkShaderErrors = true;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x06070a, 0.10);
+
+// Camera (simple orbit)
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 200);
+let camTarget = new THREE.Vector3(0, 0, 0);
+let camRadius = 6.0;
+let camTheta  = 1.25;
+let camPhi    = 0.25;
+
+function updateCamera(){
+  camTheta = Math.max(0.02, Math.min(Math.PI - 0.02, camTheta));
+  const x = camRadius * Math.sin(camTheta) * Math.sin(camPhi);
+  const y = camRadius * Math.cos(camTheta);
+  const z = camRadius * Math.sin(camTheta) * Math.cos(camPhi);
+  camera.position.set(camTarget.x + x, camTarget.y + y, camTarget.z + z);
+  camera.lookAt(camTarget);
+}
+updateCamera();
+
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+// ---------- Lights ----------
+const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+scene.add(ambient);
+
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.55);
+const rimLight = new THREE.DirectionalLight(0xffffff, 0.80);
+
+keyLight.castShadow = false;
+fillLight.castShadow = false;
+rimLight.castShadow = false;
+
+scene.add(keyLight);
+scene.add(fillLight);
+scene.add(rimLight);
+
+function setLightDir(light, azDeg, elDeg, radius=8){
+  const az = azDeg * Math.PI / 180;
+  const el = elDeg * Math.PI / 180;
+  const x = radius * Math.cos(el) * Math.sin(az);
+  const y = radius * Math.sin(el);
+  const z = radius * Math.cos(el) * Math.cos(az);
+  light.position.set(x, y, z);
+  light.target.position.set(0,0,0);
+  if (!light.target.parent) scene.add(light.target);
+}
+
+// ---------- Params ----------
+const CUBE_SIZE = 0.03;
+const FLOW_SCALE_FIXED = 0.95;
+const VOLUME = new THREE.Vector3(2.3, 1.5, 2.3);
+const geometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
+
+const params = {
+  amp: 0.55,
+  speed: 0.55,
+  cubeScale: 1.0,
+  spin: 0.85,
+
+  stirStrength: 1.2,
+  stirRadius: 0.8,
+  stirEnabled: true,
+
+  colorMode: 1,
+  colorA: new THREE.Color("#3aa0ff"),
+  colorB: new THREE.Color("#ff3a8a"),
+  brightness: 1.0,
+
+  lightsEnabled: true,
+  shadowsEnabled: false,
+
+  ambientI: 0.45,
+
+  keyI: 1.0, keyAz: 35, keyEl: 55,
+  fillI: 0.55, fillAz: -55, fillEl: 25,
+  rimI: 0.80, rimAz: 170, rimEl: 10,
+
+  roughness: 0.55,
+  metalness: 0.10,
+};
+
+// ---------- Interaction (pointer on z=0 plane) ----------
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const hit = new THREE.Vector3();
+
+let isStirDrag = false;
+let isOrbitDrag = false;
+let lastOrbitX = 0, lastOrbitY = 0;
+
+let pointerWorld = new THREE.Vector3();
+let lastPointerWorld = new THREE.Vector3();
+let pointerVel = new THREE.Vector3();
+let velSmoothed = new THREE.Vector3();
+let lastPointerTime = performance.now();
+
+function setNDCFromEvent(e){
+  const r = canvas.getBoundingClientRect();
+  ndc.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+  ndc.y = -(((e.clientY - r.top) / r.height) * 2 - 1);
+}
+function updatePointerWorldFromNDC(){
+  raycaster.setFromCamera(ndc, camera);
+  raycaster.ray.intersectPlane(plane, hit);
+  if (Number.isFinite(hit.x)) pointerWorld.copy(hit);
+}
+function updatePointerVelocity(){
+  const now = performance.now();
+  const dt = Math.max(0.001, (now - lastPointerTime) / 1000);
+  lastPointerTime = now;
+  const rawVel = pointerWorld.clone().sub(lastPointerWorld).divideScalar(dt);
+  lastPointerWorld.copy(pointerWorld);
+  velSmoothed.lerp(rawVel, 0.25);
+  pointerVel.copy(velSmoothed);
+}
+
+// ---------- Material injection (motion + color) ----------
+function makeInjectedMaterial(){
+  const mat = new THREE.MeshStandardMaterial({
+    roughness: params.roughness,
+    metalness: params.metalness,
+  });
+
+  mat.onBeforeCompile = (shader) => {
+    // motion uniforms
+    shader.uniforms.uTime  = { value: 0 };
+    shader.uniforms.uAmp   = { value: params.amp };
+    shader.uniforms.uSpeed = { value: params.speed };
+    shader.uniforms.uSpin  = { value: params.spin };
+    shader.uniforms.uCubeScale = { value: params.cubeScale };
+
+    // stirring uniforms
+    shader.uniforms.uStirEnabled  = { value: params.stirEnabled ? 1.0 : 0.0 };
+    shader.uniforms.uStirStrength = { value: params.stirStrength };
+    shader.uniforms.uStirRadius   = { value: params.stirRadius };
+    shader.uniforms.uPointerPos   = { value: new THREE.Vector3(0,0,0) };
+    shader.uniforms.uPointerVel   = { value: new THREE.Vector3(0,0,0) };
+
+    // color uniforms
+    shader.uniforms.uColorMode   = { value: params.colorMode };
+    shader.uniforms.uColorA      = { value: params.colorA.clone() };
+    shader.uniforms.uColorB      = { value: params.colorB.clone() };
+    shader.uniforms.uBrightness  = { value: params.brightness };
+    shader.uniforms.uHeightMin   = { value: -VOLUME.y };
+    shader.uniforms.uHeightMax   = { value:  VOLUME.y };
+
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <common>",
+      `#include <common>
+uniform float uTime;
+uniform float uAmp;
+uniform float uSpeed;
+uniform float uSpin;
+uniform float uCubeScale;
+
+uniform float uStirEnabled;
+uniform float uStirStrength;
+uniform float uStirRadius;
+uniform vec3  uPointerPos;
+uniform vec3  uPointerVel;
+
+uniform float uColorMode;
+uniform float uHeightMin;
+uniform float uHeightMax;
+
+varying float vSeedMix;
+varying float vHeightT;
+
+float hash11(float p){
+  p = fract(p * 0.1031);
+  p *= p + 33.33;
+  p *= p + p;
+  return fract(p);
+}
+
+vec3 vortexField(vec3 p, float t){
+  float a = sin(p.y + t) + cos(p.z * 1.3 - t * 0.7);
+  float b = sin(p.z + t * 0.9) + cos(p.x * 1.1 + t * 0.6);
+  float c = sin(p.x - t * 0.8) + cos(p.y * 1.2 + t * 0.5);
+  vec3 v = vec3(a - b, b - c, c - a);
+  return normalize(v + 1e-6);
+}
+
+vec3 stirVortex(vec3 p, vec3 center, vec3 vel){
+  vec3 d = p - center;
+  float dist = length(d);
+  float s = exp(- (dist*dist) / max(1e-4, uStirRadius*uStirRadius));
+
+  vec3 vdir = normalize(vel + vec3(0.0001));
+  vec3 axis = normalize(vec3(-vdir.y, vdir.x, 0.35));
+
+  vec3 swirl = cross(axis, normalize(d + 1e-6));
+  float vmag = clamp(length(vel) * 0.12, 0.0, 2.5);
+  return swirl * (uStirStrength * s * vmag);
+}
+`
+    );
+
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <begin_vertex>",
+      `#include <begin_vertex>
+
+#ifdef USE_INSTANCING
+  transformed *= uCubeScale;
+
+  vec3 base = instanceMatrix[3].xyz;
+
+  float r1 = hash11(dot(base, vec3(12.9898, 78.233, 37.719)));
+  float r2 = hash11(dot(base, vec3(39.3468, 11.135, 83.155)));
+
+  float t = uTime * uSpeed + r1 * 10.0;
+
+  vec3 p = base * ${FLOW_SCALE_FIXED.toFixed(4)} + vec3(r2, r1, r2) * 2.0;
+
+  vec3 v1 = vortexField(p, t * 0.9);
+  vec3 v2 = vortexField(p + v1 * 0.35, t * 0.9);
+  vec3 flow = normalize(v1 + v2);
+
+  vec3 stir = vec3(0.0);
+  if (uStirEnabled > 0.5) {
+    stir = stirVortex(base, uPointerPos, uPointerVel);
+  }
+
+  vec3 combined = normalize(flow + stir);
+  transformed += combined * uAmp;
+
+  float ang = t * uSpin + r2 * 6.2831853;
+  float ca = cos(ang), sa = sin(ang);
+  mat2 rot = mat2(ca, -sa, sa, ca);
+  transformed.xz = rot * transformed.xz;
+
+  vSeedMix = r2;
+  vHeightT = clamp((base.y - uHeightMin) / max(1e-3, (uHeightMax - uHeightMin)), 0.0, 1.0);
+#else
+  vSeedMix = 0.5;
+  vHeightT = 0.5;
+#endif
+`
+    );
+
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <common>",
+      `#include <common>
+uniform float uColorMode;
+uniform vec3  uColorA;
+uniform vec3  uColorB;
+uniform float uBrightness;
+
+varying float vSeedMix;
+varying float vHeightT;
+`
+    );
+
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "vec4 diffuseColor = vec4( diffuse, opacity );",
+      `
+vec3 baseCol;
+if (uColorMode < 0.5) {
+  baseCol = uColorA;
+} else if (uColorMode < 1.5) {
+  baseCol = mix(uColorA, uColorB, vHeightT);
+} else {
+  baseCol = mix(uColorA, uColorB, vSeedMix);
+}
+baseCol *= uBrightness;
+vec4 diffuseColor = vec4(baseCol, opacity);
+`
+    );
+
+    mat.userData.shader = shader;
+  };
+
+  return mat;
+}
+
+// ---------- Instanced mesh build / rebuild ----------
+let mesh = null;
+let material = null;
+let currentCount = 8000;
+
+function applyRandomDistribution(count){
+  if (!mesh) return;
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < count; i++) {
+    dummy.position.set(
+      (Math.random() * 2 - 1) * VOLUME.x,
+      (Math.random() * 2 - 1) * VOLUME.y,
+      (Math.random() * 2 - 1) * VOLUME.z
+    );
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+}
+
+function setUniformsLive(){
+  const sh = material?.userData?.shader;
+  if (!sh) return;
+
+  sh.uniforms.uAmp.value = params.amp;
+  sh.uniforms.uSpeed.value = params.speed;
+  sh.uniforms.uSpin.value = params.spin;
+  sh.uniforms.uCubeScale.value = params.cubeScale;
+
+  sh.uniforms.uStirStrength.value = params.stirStrength;
+  sh.uniforms.uStirRadius.value = params.stirRadius;
+  sh.uniforms.uStirEnabled.value = params.stirEnabled ? 1.0 : 0.0;
+
+  sh.uniforms.uColorMode.value = params.colorMode;
+  sh.uniforms.uColorA.value.copy(params.colorA);
+  sh.uniforms.uColorB.value.copy(params.colorB);
+  sh.uniforms.uBrightness.value = params.brightness;
+}
+
+function buildMesh(count){
+  if (mesh) scene.remove(mesh);
+  if (material) material.dispose();
+
+  material = makeInjectedMaterial();
+  mesh = new THREE.InstancedMesh(geometry, material, count);
+  mesh.frustumCulled = false;
+
+  // shadows (toggle)
+  mesh.castShadow = params.shadowsEnabled;
+  mesh.receiveShadow = params.shadowsEnabled;
+
+  scene.add(mesh);
+  applyRandomDistribution(count);
+  currentCount = count;
+  countLabel.textContent = `cubes: ${currentCount.toLocaleString()}`;
+  setUniformsLive();
+}
+
+// ---------- Controls for lights ----------
+function applyLighting(){
+  const enabled = params.lightsEnabled;
+
+  ambient.visible = enabled;
+  keyLight.visible = enabled;
+  fillLight.visible = enabled;
+  rimLight.visible = enabled;
+
+  ambient.intensity = params.ambientI;
+
+  keyLight.intensity = params.keyI;
+  fillLight.intensity = params.fillI;
+  rimLight.intensity = params.rimI;
+
+  setLightDir(keyLight, params.keyAz, params.keyEl, 9);
+  setLightDir(fillLight, params.fillAz, params.fillEl, 9);
+  setLightDir(rimLight, params.rimAz, params.rimEl, 9);
+
+  // shadows
+  renderer.shadowMap.enabled = params.shadowsEnabled && enabled;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  keyLight.castShadow = params.shadowsEnabled && enabled;
+  fillLight.castShadow = false; // keep only key casting shadows to reduce cost
+  rimLight.castShadow = false;
+
+  const s = 18; // shadow camera size
+  keyLight.shadow.mapSize.set(1024, 1024);
+  keyLight.shadow.camera.left = -s;
+  keyLight.shadow.camera.right = s;
+  keyLight.shadow.camera.top = s;
+  keyLight.shadow.camera.bottom = -s;
+  keyLight.shadow.camera.near = 0.5;
+  keyLight.shadow.camera.far = 40;
+  keyLight.shadow.bias = -0.0004;
+}
+
+function applyMaterial(){
+  if (!material) return;
+  material.roughness = params.roughness;
+  material.metalness = params.metalness;
+  material.needsUpdate = true;
+}
+
+// ---------- Input: Left orbit, Right stir, Touch stir ----------
+canvas.addEventListener("pointerdown", (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  const isTouch = e.pointerType === "touch";
+  const isRight = e.button === 2;
+
+  if (isTouch || isRight) {
+    isStirDrag = true;
+    setNDCFromEvent(e);
+    updatePointerWorldFromNDC();
+    lastPointerWorld.copy(pointerWorld);
+    lastPointerTime = performance.now();
+    pointerVel.set(0,0,0);
+    velSmoothed.set(0,0,0);
+  } else {
+    isOrbitDrag = true;
+    lastOrbitX = e.clientX;
+    lastOrbitY = e.clientY;
+  }
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (isOrbitDrag) {
+    const dx = e.clientX - lastOrbitX;
+    const dy = e.clientY - lastOrbitY;
+    lastOrbitX = e.clientX; lastOrbitY = e.clientY;
+    camPhi   -= dx * 0.005;
+    camTheta -= dy * 0.005;
+    updateCamera();
+  }
+  if (isStirDrag) {
+    setNDCFromEvent(e);
+    updatePointerWorldFromNDC();
+    updatePointerVelocity();
+  }
+});
+
+canvas.addEventListener("pointerup", () => { isOrbitDrag = false; isStirDrag = false; });
+canvas.addEventListener("pointercancel", () => { isOrbitDrag = false; isStirDrag = false; });
+
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  camRadius *= (e.deltaY > 0) ? 1.08 : 0.92;
+  camRadius = Math.max(1.5, Math.min(40, camRadius));
+  updateCamera();
+}, { passive: false });
+
+// Resize
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---------- UI wiring ----------
+const ui = document.getElementById("ui");
+const fpsEl = document.getElementById("fps");
+const countLabel = document.getElementById("countLabel");
+
+function bindSlider(id, outId, key, fmt=2){
+  const el = document.getElementById(id);
+  const out = outId ? document.getElementById(outId) : null;
+  const update = () => {
+    const v = parseFloat(el.value);
+    params[key] = v;
+    if (out) out.textContent = (fmt === 0 ? String(Math.round(v)) : v.toFixed(fmt));
+    // route updates
+    if (key === "roughness" || key === "metalness") applyMaterial();
+    else if (id.startsWith("key") || id.startsWith("fill") || id.startsWith("rim") || key === "ambientI") applyLighting();
+    else setUniformsLive();
+  };
+  el.addEventListener("input", update);
+  update();
+  return el;
+}
+
+function bindToggle(id, key, fn){
+  const el = document.getElementById(id);
+  const update = () => { params[key] = el.checked; fn(); };
+  el.addEventListener("change", update);
+  update();
+  return el;
+}
+
+bindSlider("amp", "ampV", "amp");
+bindSlider("speed", "speedV", "speed");
+bindSlider("cubeScale", "cubeScaleV", "cubeScale");
+bindSlider("spin", "spinV", "spin");
+
+bindSlider("brightness", "brightnessV", "brightness");
+
+bindSlider("stirStrength", "stirStrengthV", "stirStrength");
+bindSlider("stirRadius", "stirRadiusV", "stirRadius");
+
+bindToggle("lightsEnabled", "lightsEnabled", applyLighting);
+bindToggle("shadowsEnabled", "shadowsEnabled", () => { applyLighting(); if (mesh) { mesh.castShadow = params.shadowsEnabled; mesh.receiveShadow = params.shadowsEnabled; } });
+
+bindSlider("ambientI", "ambientIV", "ambientI");
+
+bindSlider("keyI", "keyIV", "keyI");
+bindSlider("keyAz", "keyAzV", "keyAz", 0);
+bindSlider("keyEl", "keyElV", "keyEl", 0);
+
+bindSlider("fillI", "fillIV", "fillI");
+bindSlider("fillAz", "fillAzV", "fillAz", 0);
+bindSlider("fillEl", "fillElV", "fillEl", 0);
+
+bindSlider("rimI", "rimIV", "rimI");
+bindSlider("rimAz", "rimAzV", "rimAz", 0);
+bindSlider("rimEl", "rimElV", "rimEl", 0);
+
+bindSlider("rough", "roughV", "roughness");
+bindSlider("metal", "metalV", "metalness");
+
+const colorMode = document.getElementById("colorMode");
+const colorA = document.getElementById("colorA");
+const colorB = document.getElementById("colorB");
+
+colorMode.addEventListener("change", () => { params.colorMode = parseInt(colorMode.value, 10); setUniformsLive(); });
+colorA.addEventListener("input", () => { params.colorA.set(colorA.value); setUniformsLive(); });
+colorB.addEventListener("input", () => { params.colorB.set(colorB.value); setUniformsLive(); });
+
+const b2k = document.getElementById("b2k");
+const b8k = document.getElementById("b8k");
+const b20k = document.getElementById("b20k");
+const pauseBtn = document.getElementById("pause");
+const resetBtn = document.getElementById("reset");
+const hideBtn = document.getElementById("hide");
+const stirToggleBtn = document.getElementById("stirToggle");
+
+function setPresetActive(count){
+  b2k.classList.toggle("primary", count === 2000);
+  b8k.classList.toggle("primary", count === 8000);
+  b20k.classList.toggle("primary", count === 20000);
+}
+function setCount(count){ setPresetActive(count); buildMesh(count); }
+b2k.onclick = () => setCount(2000);
+b8k.onclick = () => setCount(8000);
+b20k.onclick = () => setCount(20000);
+
+resetBtn.onclick = () => applyRandomDistribution(currentCount);
+hideBtn.onclick = () => ui.classList.toggle("hidden");
+
+let paused = false;
+function togglePause(){
+  paused = !paused;
+  pauseBtn.textContent = paused ? "Resume (Space)" : "Pause (Space)";
+}
+pauseBtn.onclick = () => togglePause();
+
+function updateStirUI(){
+  stirToggleBtn.textContent = params.stirEnabled ? "Stir: ON (M)" : "Stir: OFF (M)";
+  stirToggleBtn.classList.toggle("toggled", params.stirEnabled);
+}
+stirToggleBtn.onclick = () => { params.stirEnabled = !params.stirEnabled; updateStirUI(); setUniformsLive(); };
+updateStirUI();
+
+addEventListener("keydown", (e) => {
+  if (e.repeat) return;
+  const k = e.key.toLowerCase();
+  if (k === " ") { e.preventDefault(); togglePause(); }
+  else if (k === "r") { applyRandomDistribution(currentCount); }
+  else if (k === "1") { setCount(2000); }
+  else if (k === "2") { setCount(8000); }
+  else if (k === "3") { setCount(20000); }
+  else if (k === "h") { ui.classList.toggle("hidden"); }
+  else if (k === "m") { params.stirEnabled = !params.stirEnabled; updateStirUI(); setUniformsLive(); }
+});
+
+// FPS + loop
+const clock = new THREE.Clock();
+let lastT = 0;
+let frames = 0;
+let fpsLast = performance.now();
+
+function updateFPS(){
+  frames++;
+  const now = performance.now();
+  const dt = now - fpsLast;
+  if (dt >= 400) {
+    fpsEl.textContent = `FPS: ${(frames * 1000 / dt).toFixed(0)}`;
+    frames = 0;
+    fpsLast = now;
+  }
+}
+
+function tick(){
+  const rawT = clock.getElapsedTime();
+  const t = paused ? lastT : rawT;
+  if (!paused) lastT = t;
+
+  const sh = material?.userData?.shader;
+  if (sh) {
+    sh.uniforms.uTime.value = t;
+    if (!isStirDrag) pointerVel.multiplyScalar(0.85);
+    sh.uniforms.uPointerPos.value.copy(pointerWorld);
+    sh.uniforms.uPointerVel.value.copy(pointerVel);
+  }
+
+  renderer.render(scene, camera);
+  updateFPS();
+  requestAnimationFrame(tick);
+}
+
+// boot
+setPresetActive(8000);
+buildMesh(8000);
+countLabel.textContent = `cubes: ${currentCount.toLocaleString()}`;
+
+applyLighting();
+applyMaterial();
+setUniformsLive();
+
+console.log("[v0.3.0] running");
+tick();
+</script>
+</body>
+</html>
